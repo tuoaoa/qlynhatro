@@ -1,0 +1,19 @@
+{
+  "name": "qlynhatro",
+  "version": "1.0.0",
+  "description": "Hệ Thống Tự Chốt Số & Tính Tiền Phòng Trọ Tối Giản",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 38480",
+    "build": "next build",
+    "start": "next start -p 38480"
+  },
+  "dependencies": {
+    "next": "^14.2.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sqlite3": "^5.1.7",
+    "qrcode": "^1.5.3",
+    "lucide-react": "^0.378.0"
+  }
+}
