@@ -202,6 +202,33 @@ export default function TenantPage({ params }) {
     setInvoice(prev => ({ ...prev, status: 'PAID' }));
   };
 
+  const handleDownloadInvoiceImage = async () => {
+    try {
+      const html2canvas = (await import('html2canvas')).default;
+      const element = document.getElementById('invoice-card-payment');
+      if (!element) return;
+      
+      const downloadBtn = document.getElementById('download-invoice-btn');
+      if (downloadBtn) downloadBtn.style.opacity = '0';
+      
+      const canvas = await html2canvas(element, {
+        useCORS: true,
+        backgroundColor: '#161e2b', // Card premium glass background
+        scale: 2
+      });
+      
+      if (downloadBtn) downloadBtn.style.opacity = '1';
+      
+      const dataUrl = canvas.toDataURL('image/png');
+      const link = document.createElement('a');
+      link.download = `HoaDon_Phong_${invoice?.room_number || 'Phong'}_Thang_${month}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error('Lỗi xuất ảnh hóa đơn:', err);
+    }
+  };
+
   const elecDiff = electricityNew ? (parseFloat(electricityNew) - (invoice?.electricity_old || 0)) : 0;
   const waterDiff = waterNew ? (parseFloat(waterNew) - (invoice?.water_old || 0)) : 0;
 
@@ -363,7 +390,7 @@ export default function TenantPage({ params }) {
       )}
 
       {invoice?.status === 'PENDING_PAYMENT' && result && (
-        <div className="card">
+        <div className="card" id="invoice-card-payment">
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h2>Quét Mã Thanh Toán</h2>
             <div className="badge badge-unpaid">Chờ Chuyển Khoản</div>
@@ -415,6 +442,16 @@ export default function TenantPage({ params }) {
 
           <button onClick={handleConfirmPaid} className="btn btn-success">
             <CheckCircle size={20} /> Tôi Đã Chuyển Khoản Thành Công
+          </button>
+
+          <button 
+            type="button" 
+            id="download-invoice-btn" 
+            onClick={handleDownloadInvoiceImage} 
+            className="btn btn-secondary"
+            style={{ marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'rgba(255,255,255,0.06)' }}
+          >
+            📸 Tải ảnh hóa đơn chốt số / Gửi Zalo
           </button>
         </div>
       )}

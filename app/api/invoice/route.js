@@ -159,15 +159,18 @@ export async function POST(request) {
 
     // Scenario A: Client is confirming the invoice
     if (confirm === true) {
-      await run(db, `
-        UPDATE invoices
-        SET status = 'PENDING_PAYMENT'
-        WHERE id = ?
-      `, [invoice.id]);
+      // Ensure self-healing column exists
+      try { await run(db, "ALTER TABLE invoices ADD COLUMN payment_memo TEXT UNIQUE"); } catch (_) {}
 
       // Unique Payment Memo suffix NTRO-[Room]-[Month]-[3-chars]
       const randomSuffix = crypto.randomBytes(2).toString('hex').toUpperCase().substring(0, 3);
       const addInfo = `NTRO-${invoice.room_number}-T${month.replace('-', '')}-${randomSuffix}`;
+
+      await run(db, `
+        UPDATE invoices
+        SET status = 'PENDING_PAYMENT', payment_memo = ?
+        WHERE id = ?
+      `, [addInfo, invoice.id]);
       
       const bankName = config.bank_name || 'VCB';
       const bankAccount = config.bank_account || '0071001234567';

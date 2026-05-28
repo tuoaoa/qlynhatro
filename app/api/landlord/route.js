@@ -298,6 +298,94 @@ export async function POST(request) {
       return NextResponse.json({ success: true, message: 'Đã hoàn thành thủ tục Move-in & Ký hợp đồng thuê thành công.' });
     }
 
+    if (action === 'liquidate_contract') {
+      const { roomId, electricityNew, waterNew, deductionFee, deductionNote } = body;
+      if (!roomId) {
+        await close(db);
+        return NextResponse.json({ error: 'Thiếu thông tin ID phòng để thanh lý.' }, { status: 400 });
+      }
+
+      // Fetch active contract and room details
+      const contract = await get(db, `
+        SELECT c.*, r.electricity_old, r.water_old, r.price as room_price, r.room_number
+        FROM rental_contracts c
+        JOIN rooms r ON c.room_id = r.id
+        WHERE c.room_id = ? AND c.status = 'ACTIVE'
+      `, [roomId]);
+
+      if (!contract) {
+        await close(db);
+        return NextResponse.json({ error: 'Không tìm thấy hợp đồng hoạt động cho phòng này.' }, { status: 404 });
+      }
+
+      const prop = await get(db, 'SELECT * FROM properties LIMIT 1');
+
+      const eNew = parseFloat(electricityNew || contract.electricity_old);
+      const wNew = parseFloat(waterNew || contract.water_old);
+
+      if (eNew < contract.electricity_old || wNew < contract.water_old) {
+        await close(db);
+        return NextResponse.json({ error: 'Chỉ số điện nước cuối cùng không thể nhỏ hơn chỉ số cũ.' }, { status: 400 });
+      }
+
+      const eUsage = eNew - contract.electricity_old;
+      const wUsage = wNew - contract.water_old;
+
+      const electricityAmount = eUsage * prop.electricity_price;
+      const waterAmount = wUsage * prop.water_price;
+      const fee = parseFloat(deductionFee || 0);
+
+      const totalDeductions = electricityAmount + waterAmount + fee;
+      const refundAmount = contract.deposit_amount - totalDeductions;
+
+      await executeTransaction(db, async (tx) => {
+        // 1. End the contract
+        const nowStr = new Date().toISOString().split('T')[0];
+        await tx.run(`
+          UPDATE rental_contracts
+          SET status = 'ENDED', move_out_date = ?
+          WHERE id = ?
+        `, [nowStr, contract.id]);
+
+        // 2. Set room status back to VACANT and update old readings to the new final readings
+        await tx.run(`
+          UPDATE rooms
+          SET status = 'VACANT', electricity_old = ?, water_old = ?
+          WHERE id = ?
+        `, [eNew, wNew, roomId]);
+
+        // 3. Log event
+        const eventId = `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+        await tx.run(`
+          INSERT INTO invoice_events (id, invoice_id, event_type, event_details)
+          VALUES (?, ?, ?, ?)
+        `, [eventId, `liq_${contract.id}`, 'CONTRACT_LIQUIDATED', JSON.stringify({
+          contractId: contract.id,
+          roomId,
+          finalElectricity: eNew,
+          finalWater: wNew,
+          deductionFee: fee,
+          deductionNote: deductionNote || '',
+          deposit: contract.deposit_amount,
+          refundAmount: refundAmount
+        })]);
+      });
+
+      await close(db);
+      return NextResponse.json({
+        success: true,
+        message: 'Thanh lý hợp đồng và trả phòng thành công.',
+        data: {
+          roomNumber: contract.room_number,
+          deposit: contract.deposit_amount,
+          electricityAmount,
+          waterAmount,
+          deductionFee: fee,
+          refundAmount
+        }
+      });
+    }
+
     // 6. Bulk Monthly Open
     if (action === 'bulk_open') {
       const month = body.targetMonth || '2026-05';

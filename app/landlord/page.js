@@ -68,6 +68,13 @@ export default function LandlordPage() {
   const [uploadedEvidenceUrls, setUploadedEvidenceUrls] = useState([]);
   const [zoomImageUrl, setZoomImageUrl] = useState(null); // Click to zoom modal
   const [activeInvoiceSubTab, setActiveInvoiceSubTab] = useState('pending'); // pending, unpaid, paid
+  const [liqModalOpen, setLiqModalOpen] = useState(false);
+  const [liqRoom, setLiqRoom] = useState(null);
+  const [liqForm, setLiqForm] = useState({
+    electricityNew: '', waterNew: '', deductionFee: '0', deductionNote: ''
+  });
+  const [liqResult, setLiqResult] = useState(null);
+  const [liquidating, setLiquidating] = useState(false);
 
   const month = '2026-05'; // Frozen demo month
 
@@ -411,6 +418,53 @@ export default function LandlordPage() {
     }
   };
 
+  const startLiquidation = (room) => {
+    setLiqRoom(room);
+    setLiqForm({
+      electricityNew: room.electricity_old.toString(),
+      waterNew: room.water_old.toString(),
+      deductionFee: '0',
+      deductionNote: ''
+    });
+    setLiqResult(null);
+    setLiqModalOpen(true);
+  };
+
+  const handleExecuteLiquidation = async (e) => {
+    e.preventDefault();
+    if (!liqRoom) return;
+
+    if (!confirm(`Bạn có chắc chắn muốn thanh lý hợp đồng và trả phòng ${liqRoom.room_number}?`)) {
+      return;
+    }
+
+    setLiquidating(true);
+    try {
+      const res = await fetch('/qlynhatro/api/landlord', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'liquidate_contract',
+          roomId: liqRoom.id,
+          electricityNew: parseFloat(liqForm.electricityNew),
+          waterNew: parseFloat(liqForm.waterNew),
+          deductionFee: parseFloat(liqForm.deductionFee || 0),
+          deductionNote: liqForm.deductionNote
+        })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Thanh lý thất bại');
+      
+      setLiqResult(json.data);
+      alert('Thanh lý thành công!');
+      await loadData();
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setLiquidating(false);
+    }
+  };
+
   const handleDeleteTenant = async (tenantId) => {
     if (!confirm('Bạn có chắc chắn muốn xóa khách thuê này?')) {
       return;
@@ -539,6 +593,98 @@ export default function LandlordPage() {
               <span>Tỷ lệ lấp đầy phòng:</span>
               <strong>{data?.rooms?.filter(r => r.room_status === 'OCCUPIED').length} / {data?.rooms?.length || 1} phòng ({Math.round((data?.rooms?.filter(r => r.room_status === 'OCCUPIED').length / (data?.rooms?.length || 1)) * 100)}%)</strong>
             </div>
+          </div>
+
+          {/* Biểu đồ phân tích SVG trực quan */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            {/* Chart 1: Tỷ lệ lấp đầy */}
+            {(() => {
+              const totalRooms = data?.rooms?.length || 1;
+              const occupiedRooms = data?.rooms?.filter(r => r.room_status === 'OCCUPIED').length || 0;
+              const occupiedPct = Math.round((occupiedRooms / totalRooms) * 100);
+              const vacantPct = 100 - occupiedPct;
+              
+              return (
+                <div className="card" style={{ gap: '10px', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '16px' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: '600', opacity: 0.8, color: '#fff', width: '100%' }}>Tỷ lệ lấp đầy</h3>
+                  
+                  <div style={{ position: 'relative', width: '100px', height: '100px', margin: '8px 0' }}>
+                    <svg viewBox="0 0 36 36" style={{ width: '100px', height: '100px', transform: 'rotate(-90deg)' }}>
+                      {/* Background circle */}
+                      <circle cx="18" cy="18" r="15.91549430918954" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="3" />
+                      {/* Occupied stroke (Primary Blue) */}
+                      <circle 
+                        cx="18" 
+                        cy="18" 
+                        r="15.91549430918954" 
+                        fill="none" 
+                        stroke="hsl(var(--primary))" 
+                        strokeWidth="3.2" 
+                        strokeDasharray={`${occupiedPct} ${vacantPct}`} 
+                        strokeLinecap="round"
+                        style={{ transition: 'stroke-dasharray 0.5s ease' }}
+                      />
+                    </svg>
+                    <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ fontSize: '18px', fontWeight: '800', color: '#fff' }}>{occupiedPct}%</span>
+                      <span style={{ fontSize: '8px', opacity: 0.6 }}>ĐÃ THUÊ</span>
+                    </div>
+                  </div>
+                  <p style={{ fontSize: '11px', opacity: 0.8 }}>Có khách: {occupiedRooms} | Trống: {totalRooms - occupiedRooms}</p>
+                </div>
+              );
+            })()}
+
+            {/* Chart 2: Tỷ lệ thu hồi dòng tiền */}
+            {(() => {
+              const expRev = data?.summary?.totalExpected || 0;
+              const colRev = data?.summary?.collected || 0;
+              const maxVal = Math.max(expRev, colRev, 1000000);
+              const expHeight = Math.round((expRev / maxVal) * 70) || 5;
+              const colHeight = Math.round((colRev / maxVal) * 70) || 5;
+              
+              return (
+                <div className="card" style={{ gap: '10px', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '16px' }}>
+                  <h3 style={{ fontSize: '12px', fontWeight: '600', opacity: 0.8, color: '#fff', width: '100%' }}>Dòng tiền thực tế</h3>
+                  
+                  <div style={{ width: '100%', height: '100px', display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: '24px', margin: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '4px' }}>
+                    {/* Expected bar (Blue) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                      <span style={{ fontSize: '9px', fontWeight: 'bold', color: 'hsl(var(--primary))' }}>
+                        {expRev > 1000000 ? `${(expRev / 1000000).toFixed(1)}M` : expRev.toLocaleString('vi-VN')}
+                      </span>
+                      <div style={{ 
+                        background: 'rgba(59, 130, 246, 0.2)', 
+                        border: '1px solid rgba(59, 130, 246, 0.4)',
+                        width: '28px', 
+                        height: `${expHeight}px`, 
+                        borderRadius: '4px 4px 0 0',
+                        transition: 'height 0.5s ease'
+                      }}></div>
+                      <span style={{ fontSize: '8px', opacity: 0.6 }}>Dự kiến</span>
+                    </div>
+
+                    {/* Collected bar (Green) */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px' }}>
+                      <span style={{ fontSize: '9px', fontWeight: 'bold', color: 'hsl(var(--success))' }}>
+                        {colRev > 1000000 ? `${(colRev / 1000000).toFixed(1)}M` : colRev.toLocaleString('vi-VN')}
+                      </span>
+                      <div style={{ 
+                        background: 'rgba(34, 197, 94, 0.2)', 
+                        border: '1px solid rgba(34, 197, 94, 0.4)',
+                        width: '28px', 
+                        height: `${colHeight}px`, 
+                        borderRadius: '4px 4px 0 0',
+                        transition: 'height 0.5s ease'
+                      }}></div>
+                      <span style={{ fontSize: '8px', opacity: 0.6 }}>Đã thu</span>
+                    </div>
+                  </div>
+                  
+                  <p style={{ fontSize: '11px', opacity: 0.8 }}>Chưa thu: {(expRev - colRev) > 0 ? (expRev - colRev).toLocaleString('vi-VN') : 0} đ</p>
+                </div>
+              );
+            })()}
           </div>
 
           {/* Action trigger: Open month */}
@@ -823,6 +969,15 @@ export default function LandlordPage() {
                     {room.room_status === 'OCCUPIED' ? 'Đang thuê' : 'Trống'}
                   </div>
                   <div style={{ display: 'flex', gap: '6px' }}>
+                    {room.room_status === 'OCCUPIED' && (
+                      <button 
+                        onClick={() => startLiquidation(room)} 
+                        className="btn btn-primary" 
+                        style={{ height: '28px', fontSize: '11px', width: 'auto', padding: '0 8px', borderRadius: '6px', background: 'hsl(var(--warning))', color: '#fff', border: 'none' }}
+                      >
+                        Thanh lý
+                      </button>
+                    )}
                     <button 
                       onClick={() => startEditRoom(room)} 
                       className="btn btn-secondary" 
@@ -1744,6 +1899,183 @@ export default function LandlordPage() {
           <span>Cài đặt</span>
         </div>
       </div>
+
+      {/* Liquidation & Refund Modal Component */}
+      {liqModalOpen && liqRoom && (
+        <div 
+          style={{ 
+            position: 'fixed', 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0, 
+            background: 'rgba(0,0,0,0.85)', 
+            zIndex: 9998, 
+            display: 'flex', 
+            justifyContent: 'center', 
+            alignItems: 'center', 
+            padding: '16px',
+            overflowY: 'auto'
+          }}
+        >
+          <div 
+            className="card" 
+            style={{ 
+              maxWidth: '440px', 
+              width: '100%', 
+              maxHeight: '90vh', 
+              overflowY: 'auto',
+              border: '1px solid rgba(255,255,255,0.15)',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+              gap: '16px'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                🔑 Thanh lý hợp đồng {liqRoom.room_number}
+              </h2>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setLiqModalOpen(false);
+                  setLiqRoom(null);
+                  setLiqResult(null);
+                }} 
+                style={{ background: 'none', border: 'none', color: '#fff', fontSize: '18px', cursor: 'pointer', opacity: 0.7 }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {!liqResult ? (
+              <form onSubmit={handleExecuteLiquidation} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <p style={{ fontSize: '13px', opacity: 0.8 }}>
+                  Khách hàng: <strong>{liqRoom.tenant_name}</strong> ({liqRoom.tenant_phone})
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div className="form-group">
+                    <label>Số điện cuối cùng (Cũ: {liqRoom.electricity_old})</label>
+                    <input 
+                      type="number" 
+                      value={liqForm.electricityNew}
+                      onChange={e => setLiqForm({...liqForm, electricityNew: e.target.value})}
+                      required
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Số nước cuối cùng (Cũ: {liqRoom.water_old})</label>
+                    <input 
+                      type="number" 
+                      value={liqForm.waterNew}
+                      onChange={e => setLiqForm({...liqForm, waterNew: e.target.value})}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Chi phí khấu trừ hư hại / vệ sinh (đ)</label>
+                  <input 
+                    type="number" 
+                    value={liqForm.deductionFee}
+                    onChange={e => setLiqForm({...liqForm, deductionFee: e.target.value})}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label>Ghi chú khấu trừ (nếu có)</label>
+                  <input 
+                    type="text" 
+                    placeholder="Ví dụ: Đền bù hỏng khóa cửa, dọn vệ sinh..."
+                    value={liqForm.deductionNote}
+                    onChange={e => setLiqForm({...liqForm, deductionNote: e.target.value})}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
+                  <button type="submit" className="btn btn-primary" disabled={liquidating} style={{ flex: 1 }}>
+                    {liquidating ? 'Đang thanh lý...' : 'Xác nhận Trả phòng & Thanh lý'}
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setLiqModalOpen(false);
+                      setLiqRoom(null);
+                    }} 
+                    className="btn btn-secondary" 
+                    style={{ flex: 1 }}
+                  >
+                    Hủy bỏ
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div style={{ background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.2)', padding: '12px', borderRadius: '8px', textAlign: 'center' }}>
+                  <strong style={{ color: '#4caf50', fontSize: '15px' }}>✓ Đã kết thúc hợp đồng thành công!</strong>
+                  <p style={{ fontSize: '12px', opacity: 0.8, marginTop: '2px' }}>Phòng {liqResult.roomNumber} đã được đưa về trạng thái trống (VACANT).</p>
+                </div>
+
+                <table className="bill-table" style={{ width: '100%', fontSize: '13px' }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ padding: '6px 0' }}>Tiền cọc giữ phòng:</td>
+                      <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#fff' }}>{liqResult.deposit.toLocaleString('vi-VN')} đ</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: '6px 0' }}>Tiền điện cuối kỳ:</td>
+                      <td style={{ textAlign: 'right', color: 'hsl(var(--destructive))' }}>-{liqResult.electricityAmount.toLocaleString('vi-VN')} đ</td>
+                    </tr>
+                    <tr>
+                      <td style={{ padding: '6px 0' }}>Tiền nước cuối kỳ:</td>
+                      <td style={{ textAlign: 'right', color: 'hsl(var(--destructive))' }}>-{liqResult.waterAmount.toLocaleString('vi-VN')} đ</td>
+                    </tr>
+                    {liqResult.deductionFee > 0 && (
+                      <tr>
+                        <td style={{ padding: '6px 0' }}>Phí bồi thường/Vệ sinh:</td>
+                        <td style={{ textAlign: 'right', color: 'hsl(var(--destructive))' }}>-{liqResult.deductionFee.toLocaleString('vi-VN')} đ</td>
+                      </tr>
+                    )}
+                    <tr style={{ borderTop: '1px solid rgba(255,255,255,0.1)', fontWeight: 'bold' }}>
+                      <td style={{ padding: '8px 0', fontSize: '14px', color: '#fff' }}>
+                        {liqResult.refundAmount >= 0 ? '💰 Hoàn trả khách:' : '⚠️ Khách cần đóng thêm:'}
+                      </td>
+                      <td style={{ textAlign: 'right', fontSize: '16px', color: liqResult.refundAmount >= 0 ? '#4caf50' : 'hsl(var(--warning))' }}>
+                        {Math.abs(liqResult.refundAmount).toLocaleString('vi-VN')} đ
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {liqResult.refundAmount < 0 && (
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '12px', borderRadius: '8px', textAlign: 'center', border: '1px dashed rgba(255,255,255,0.1)' }}>
+                    <p style={{ fontSize: '10px', marginBottom: '6px' }}>QUÉT VIETQR ĐỂ KHÁCH THANH TOÁN KHOẢN THIẾU</p>
+                    <img 
+                      src={`https://img.vietqr.io/image/${settingsForm.bankName || 'VCB'}-${settingsForm.bankAccount || '0071001234567'}-compact2.png?amount=${Math.abs(liqResult.refundAmount)}&addInfo=${encodeURIComponent(`THANH LY PHONG ${liqResult.roomNumber}`)}&accountName=${encodeURIComponent(settingsForm.bankOwner || 'Nguyen Van A')}`} 
+                      alt="VietQR Liquidation" 
+                      style={{ borderRadius: '8px', border: '3px solid #fff', width: '150px', height: '150px', margin: '0 auto' }}
+                    />
+                  </div>
+                )}
+
+                <button 
+                  onClick={() => {
+                    setLiqModalOpen(false);
+                    setLiqRoom(null);
+                    setLiqResult(null);
+                  }} 
+                  className="btn btn-primary"
+                  style={{ marginTop: '8px' }}
+                >
+                  Hoàn tất đóng đối soát
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Click to Zoom Modal Component */}
       {zoomImageUrl && (
